@@ -209,14 +209,17 @@ class GeonameFeatures(object):
         # tend to be the ones most commonly referred to.
         d['name_count'] = geoname.name_count
         d['num_spans'] = len(geoname.spans)
-        d['max_span_length'] = max([
-            len(span.text) for span in geoname.spans])
+        if(len(geoname.spans)):
+            d['max_span_length'] = max([
+                len(span.text) for span in geoname.spans])
+        else:
+            d['max_span_length'] = 0
         d['cannonical_name_used'] = 1 if any([
             span.text == geoname.name for span in geoname.spans
         ]) else 0
         loc_NEs_overlap = 0
         other_NEs_overlap = 0
-        total_spans = len(geoname.spans)
+        total_spans = max(len(geoname.spans), 1)
         for span in geoname.spans:
             for ne_span in spans_to_nes[span]:
                 if ne_span.label == 'GPE' or ne_span.label == 'LOC':
@@ -239,6 +242,7 @@ class GeonameFeatures(object):
                     other_pos_tags += 1
                 if token.prob < min_token_prob:
                     min_token_prob = token.prob
+        pos_tags = max(pos_tags, 1)
         d['min_token_prob'] = min_token_prob
         d['noun_portion'] = float(noun_pos_tags) / pos_tags
         d['other_pos_portion'] = float(other_pos_tags) / pos_tags
@@ -344,7 +348,7 @@ class GeonameAnnotator(Annotator):
                                ]))
         logger.info('%s ngrams extracted' % len(all_ngrams))
         cursor = self.connection.cursor()
-        geoname_results = list(cursor.execute('''
+        tmp2 = '''
         SELECT
             geonames.*,
             count AS name_count,
@@ -353,8 +357,8 @@ class GeonameAnnotator(Annotator):
         JOIN alternatename_counts USING ( geonameid )
         JOIN alternatenames USING ( geonameid )
         WHERE alternatename_lemmatized IN
-        (''' + ','.join('?' for x in all_ngrams) + ''')
-        GROUP BY geonameid''', all_ngrams))
+        (''' + ','.join("'" + escapeQuote(x) + "'" for x in all_ngrams) + ''')  GROUP BY geonameid'''
+        geoname_results = list(cursor.execute(tmp2))
         logger.info('%s geonames fetched' % len(geoname_results))
         geoname_results = [GeonameRow(g) for g in geoname_results]
         # Associate spans with the geonames.
@@ -543,3 +547,10 @@ class GeonameAnnotator(Annotator):
                 geo_spans.append(geo_span)
         culled_geospans = self.cull_geospans(geo_spans)
         return {'geonames': AnnoTier(culled_geospans)}
+
+
+# Quote a ' by doubling it. That's what SQLite expects.
+def escapeQuote(x):
+	return(x.replace("'", "''"))
+
+
