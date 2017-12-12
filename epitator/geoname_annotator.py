@@ -227,7 +227,7 @@ class GeonameFeatures(object):
         d['cannonical_name_used'] = max([
             cannonical_name_match(span, geoname)
             for span in geoname.spans
-        ])
+        ]) if len(geoname.spans) > 0 else 0
 
         loc_NEs_overlap = 0
         other_NEs_overlap = 0
