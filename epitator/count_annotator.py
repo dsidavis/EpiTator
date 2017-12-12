@@ -16,19 +16,7 @@ import logging
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s %(message)s')
 logger = logging.getLogger(__name__)
 
-case_count_senses = list(spacy_nlp(u"""
-The doctor reviewed the symptoms from the first case of the disease.
-In the index case medics recorded a high fever.
-For a recent case of Ebola medical attention was not available.
-The infected patient was hospitalized and quarantined.
-The death of the first patient, a man in his 30s, suprised doctors.
-The latest hospitalization involving a febrile disease happend on Monday.
-""").sents)
-non_case_count_senses = list(spacy_nlp(u"""
-The case is spacious container designed to hold many items.
-The lawyer's legal case is to be decided in a court of law.
-In the case of the first disease action should be taken to prevent it from spreading.
-""").sents)
+in_case_token = spacy_nlp(u"Break glass in case of emergency.")[3]
 
 
 class CountSpan(AnnoSpan):
@@ -67,15 +55,6 @@ def is_valid_count(count_string):
     return True
 
 
-def search_spans_for_regex(regex_term, spans, match_name=None):
-    regex = re.compile(r'^' + regex_term + r'$', re.I)
-    match_spans = []
-    for span in spans:
-        if regex.match(span.text):
-            match_spans.append(span)
-    return match_spans
-
-
 class CountAnnotator(Annotator):
     def annotate(self, doc):
         if 'spacy.tokens' not in doc.tiers:
@@ -102,9 +81,21 @@ class CountAnnotator(Annotator):
                         if is_valid_count(range_end.text):
                             counts.append(SpanGroup([range_end], 'count'))
 
-        def search_regex(regex_term, match_name=None):
-            return ra.label(match_name, search_spans_for_regex(
-                regex_term, spacy_tokens.spans))
+        def search_document(regex_term, match_name=None):
+            regex = re.compile(r'\b' + regex_term + r'\b', re.I)
+            match_spans = []
+            for match in regex.finditer(doc.text):
+                [start, end] = match.span()
+                match_spans.append(AnnoSpan(start, end, doc))
+            return ra.label(match_name, match_spans)
+
+        def search_spans(regex_term, match_name=None):
+            regex = re.compile(r'^' + regex_term + r'$', re.I)
+            match_spans = []
+            for span in spacy_tokens.spans:
+                if regex.match(span.text):
+                    match_spans.append(span)
+            return ra.label(match_name, match_spans)
 
         spacy_lemmas = [span.token.lemma_ for span in spacy_tokens]
 
@@ -117,20 +108,22 @@ class CountAnnotator(Annotator):
             return AnnoTier(ra.label(match_name, match_spans))
 
         # Add purely numeric counts that were not picked up by the NER.
-        counts += AnnoTier(search_regex(r'[1-9]\d{0,6}', 'count')
+        counts += AnnoTier(search_spans(r'[1-9]\d{0,6}', 'count')
                            ).without_overlaps(spacy_nes).spans
+        # Add delimited numbers
+        counts += AnnoTier(search_document(r'[1-9]\d{0,2}((\s\d{3})+|(,\d{3})+)', 'count'))
         # Add count ranges
         ranges = ra.follows([counts,
                              ra.label('range',
-                                      ra.follows([search_regex(r'to|and|or'),
+                                      ra.follows([search_spans(r'to|and|or'),
                                                   counts]))])
         counts_tier = AnnoTier(ranges + counts).optimal_span_set()
         # Remove counts that overlap an age
         counts_tier = counts_tier.without_overlaps(
-            ra.follows([search_regex('age'), search_regex('of'), counts]))
+            ra.follows([search_spans('age'), search_spans('of'), counts]))
         # Remove distances
         counts_tier = counts_tier.without_overlaps(
-            ra.follows([counts, search_regex('kilometers|km|miles|mi')]))
+            ra.follows([counts, search_spans('kilometers|km|miles|mi')]))
         # Remove counts that overlap a date
         counts_tier = counts_tier.without_overlaps(doc.tiers['dates'])
         modifier_lemma_groups = [
@@ -162,7 +155,7 @@ class CountAnnotator(Annotator):
                     'kill',
                     'claim',
                     'fatality',
-                    'deceased'
+                    'decease'
                 ], 'death') +
             search_lemmas(
                 [
@@ -176,7 +169,7 @@ class CountAnnotator(Annotator):
                     'case',
                     'infect',
                     'infection',
-                    'stricken'
+                    'strike'
                 ], 'case'))
         case_statuses = (
             search_lemmas(['suspect'], 'suspected') +
@@ -196,29 +189,16 @@ class CountAnnotator(Annotator):
             max_dist=50)
         # Add singular case reports
         singular_case_spans = []
-        determiner_lemmas = set(['a', 'an', 'the'])
+        determiner_lemmas = set(['a', 'an', 'the', 'one'])
         for cd_span, token_group in case_descriptions.group_spans_by_containing_span(spacy_tokens):
             for t_span in token_group:
                 token = t_span.token
+                if token.lemma_ == 'case' and token.similarity(in_case_token) < 0.5:
+                    continue
                 if token.tag_ == 'NN' and any(c.lower_ in determiner_lemmas
                                               for c in token.children):
                     singular_case_spans.append(cd_span)
                     break
-        # Use word sense disabiguation to omit phrases like "In the case of"
-        # The sentence vectors from setences using the word "case" with
-        # different meanings are compared to the sentence from the document.
-        # The word sense from the most similar sentence is used.
-        filtered_singular_case_spans = []
-        for sentence, group in spacy_sentences.group_spans_by_containing_span(singular_case_spans):
-            if len(group) == 0:
-                continue
-            case_count_sence_similary = max(sentence.span.similarity(x)
-                                            for x in case_count_senses)
-            non_case_count_sence_similary = max(sentence.span.similarity(x)
-                                                for x in non_case_count_senses)
-            if case_count_sence_similary > non_case_count_sence_similary:
-                filtered_singular_case_spans.extend(group)
-        singular_case_spans = filtered_singular_case_spans
         # remove counts that span multiple sentences
         all_potential_counts = (
             case_descriptions_with_counts.spans +
