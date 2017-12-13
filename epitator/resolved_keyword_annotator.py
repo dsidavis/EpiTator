@@ -64,7 +64,7 @@ class ResolvedKeywordAnnotator(Annotator):
             for result in self.synonyms:
                 while ngram < result['synonym']:
                     ngram = next(ordered_ngram_iter)
-                if ngram == result['synonym']:
+                if (ngram == result['synonym'] or ngram == result['synonym'].lower()):
                     for span in span_text_to_spans[ngram]:
                         spans_to_resolved_keywords[span].append(result)
                         entity_ids.add(result['entity_id'])
