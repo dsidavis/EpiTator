@@ -61,11 +61,13 @@ def import_species(drop_previous=False):
     itis_db = sqlite3.connect(itis_db_file.name)
     cur.execute("INSERT INTO metadata VALUES ('itis_version', ?)", (itis_version,))
     itis_cur = itis_db.cursor()
+    # Discard values with taxonomic units higher than order (100) and not in animilia (5)
     results = itis_cur.execute("""
     SELECT
       tsn,
       complete_name
     FROM taxonomic_units
+    WHERE rank_id > 100 AND kingdom_id = 5
     """)
     cur.executemany("INSERT INTO entities VALUES (?, ?, 'species', 'ITIS')", [
         ("tsn:" + str(result[0]), result[1])
